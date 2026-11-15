@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Simulador de población</title>
+<style>
+:root{--fg:#111;--bg:#fff;--card:#f2f4f7;--ac:#0b4fa8;--bd:#222}
+*{box-sizing:border-box}body{margin:0;font:17px/1.4 system-ui,sans-serif;color:var(--fg);background:var(--bg);padding:10px;max-width:980px;margin:auto}
+h1{font-size:1.3rem;margin:.2em 0}h2{font-size:1.05rem;margin:.3em 0}
+.card{background:var(--card);border:2px solid var(--bd);border-radius:10px;padding:10px;margin:10px 0}
+button,select,input[type=number],textarea{font:inherit;min-height:46px;padding:6px 12px;border:2px solid var(--bd);border-radius:8px;background:#fff;color:var(--fg)}
+button{background:var(--ac);color:#fff;font-weight:700;cursor:pointer}button:disabled{background:#666}
+:focus-visible{outline:4px solid #f5a300;outline-offset:2px}
+input[type=range]{width:100%;height:36px}
+.tag{display:inline-block;border:2px solid var(--bd);border-radius:6px;padding:0 6px;font-size:.8rem;font-weight:700;background:#fff}
+.tasa{border-style:dashed}.num{border-style:solid;background:#ffe9a8}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.grid{display:grid;gap:10px}@media(min-width:800px){.grid{grid-template-columns:1fr 1fr}}
+canvas{width:100%;height:240px;background:#fff;border:2px solid var(--bd);border-radius:8px;display:block}
+.eq{font-family:monospace;font-size:1.05rem;background:#fff;border:2px solid var(--bd);padding:6px;border-radius:6px}
+.err{color:#900;font-weight:700}.msg{font-weight:700}
+table{border-collapse:collapse}td,th{border:1px solid var(--bd);padding:3px 8px;background:#fff}
+summary{font-weight:700;min-height:44px;cursor:pointer}
+</style></head><body>
+<h1>Simulador de dinámica de poblaciones</h1>
+
+<!-- ========== LÓGICA DEL MODELO (NO MODIFICAR) ==========
+ Para tener un único archivo, reemplaza la siguiente etiqueta por <script> + contenido de modelo.js + </script> -->
+<script src="modelo.js"></script>
+<!-- ========== FIN DEL MODELO ========== -->
+
+<div class="card" id="ecuacion" aria-label="Ecuación del modelo">
+ <div class="eq">N(t+1) = N(t) + B − D + I − E</div>
+ <small>N = número de individuos · 1 paso = 1 unidad de tiempo (por ejemplo, 1 año; el modelo no fija la unidad).
+ B nacimientos, D muertes, I inmigrantes, E emigrantes (todos en individuos por paso).</small>
+ <div class="eq" id="fdens" hidden>Con densidad: b_efectiva = b · máx(0, 1 − N/K)</div>
+</div>
+
+<div class="card"><h2>Reto</h2>
+ <label for="reto">Elige modo: </label>
+ <select id="reto"><option value="libre">Exploración libre</option>
+ <option value="r1">Reto 1: estabiliza la población en torno a 50</option>
+ <option value="r2">Reto 2: rescata una población en peligro con la menor inmigración</option></select>
+ <p id="retotxt" class="msg"></p>
+</div>
+
+<div class="card"><h2>1. Predice antes de ejecutar</h2>
+ <fieldset id="pred"><legend>¿Qué crees que pasará con la población?</legend>
+ <label><input type="radio" name="p" value="aumenta"> ▲ Aumenta</label>
+ <label><input type="radio" name="p" value="disminuye"> ▼ Disminuye</label>
+ <label><input type="radio" name="p" value="se estabiliza"> ■ Se estabiliza</label>
+ <label><input type="radio" name="p" value="se extingue"> ✕ Se extingue</label></fieldset>
+</div>
+
+<div class="card"><h2>2. Ajusta los controles</h2>
+ <label for="b"><span class="tag tasa">TASA por individuo</span> Natalidad b: <b id="vb"></b></label>
+ <input type="range" id="b" min="0" max="0.5" step="0.01" value="0.1">
+ <label for="d"><span class="tag tasa">TASA por individuo</span> Mortalidad d (probabilidad de morir): <b id="vd"></b></label>
+ <input type="range" id="d" min="0" max="0.5" step="0.01" value="0.1">
+ <label for="i"><span class="tag num">NÚMERO de individuos</span> Inmigración I: <b id="vi"></b></label>
+ <input type="range" id="i" min="0" max="20" step="0.5" value="0">
+ <label for="e"><span class="tag tasa">TASA por individuo</span> Emigración e (probabilidad de irse): <b id="ve"></b></label>
+ <input type="range" id="e" min="0" max="0.5" step="0.01" value="0">
+</div>
+
+<div class="row">
+ <button id="go">▶ Iniciar</button><button id="pausa" disabled>⏸ Pausar</button><button id="reset">↺ Reiniciar</button>
+ <label>Velocidad <select id="vel"><option value="0">Lenta</option><option value="1" selected>Normal</option><option value="2">Rápida</option></select></label>
+</div>
+<p id="estado" class="msg" role="status" aria-live="polite"></p><p id="err" class="err" role="alert"></p>
+
+<div class="grid">
+ <div class="card"><h2>Población N en el tiempo</h2><canvas id="graf" role="img" aria-label="Gráfica de N frente al tiempo"></canvas></div>
+ <div class="card"><h2>Individuos</h2><canvas id="ind" role="img" aria-label="Individuos de la población"></canvas>
+  <small id="escala"></small><br><small>▲ nacen · ✕ mueren · ➜ entran (izq.) · ➜ salen (der.)</small></div>
+</div>
+
+<div class="card"><h2>Valores del paso actual (calculados por el modelo)</h2>
+ <table><tr><th>t</th><th>N</th><th>B nacen</th><th>D mueren</th><th>I entran</th><th>E salen</th></tr>
+ <tr id="fila"></tr></table><p id="aviso"></p></div>
+
+<div class="card" id="refl" hidden><h2>¿Por qué funcionó (o no)?</h2>
+ <label for="rtxt">Explica con tus palabras antes de ver el resultado:</label><br>
+ <textarea id="rtxt" rows="3" style="width:100%"></textarea><button id="ver">Ver resultado</button></div>
+<div class="card" id="res" hidden aria-live="polite"></div>
+
+<details class="card"><summary>Opciones avanzadas</summary>
+ <p><label><input type="checkbox" id="estoc"> Modo estocástico (con azar)</label></p>
+ <p><label for="sem">Semilla (solo estocástico): </label><input type="number" id="sem" value="1" step="1" style="width:110px"> <small>Misma semilla = mismo resultado.</small></p>
+ <p><label for="n0">Población inicial N0: </label><input type="number" id="n0" value="20" min="0" step="1" style="width:110px"></p>
+ <p><label><input type="checkbox" id="dens"> Dependencia de la densidad</label>
+ <label for="K"> K (capacidad de carga): </label><input type="number" id="K" value="100" min="1" style="width:110px"></p>
+ <button id="csv">Exportar CSV</button>
+</details>
+
+<script>
+/* ========== INTERFAZ (separada del modelo) ========== */
+(function(){'use strict';
+var M=window.ModeloPoblacional,$=function(x){return document.getElementById(x)};
+if(!M){$('err').textContent='No se encontró modelo.js (debe estar junto a este archivo).';return}
+var VEL=[900,450,160],est=null,tray=[],timer=null,corr=false,fin=false,pred=null,horiz=100,ev=[],raf=0;
+var RETOS={libre:{t:'Explora libremente. Pasos: 100.',h:100},
+ r1:{t:'Meta: que N quede entre 45 y 55 durante los últimos 10 pasos (60 pasos). Empiezas con N0 = 20.',h:60,n0:20,b:.1,d:.1,i:0,e:0,q:'¿Qué variables cambiaste y por qué lograron que N dejara de cambiar?'},
+ r2:{t:'Meta: que la población NO se extinga y termine con N ≥ 10 en 50 pasos (N0 = 10), usando la menor inmigración posible.',h:50,n0:10,b:.05,d:.12,i:0,e:0,q:'¿Por qué la población bajaba sin inmigración y cómo la inmigración lo compensó?'}};
+function f(x,n){return Number(x).toFixed(n)}
+function etiquetas(){$('vb').textContent=f($('b').value,2)+' hijos/individuo/paso';
+ $('vd').textContent=f($('d').value,2)+' (prob. por paso)';$('vi').textContent=f($('i').value,1)+' individuos/paso';
+ $('ve').textContent=f($('e').value,2)+' (prob. por paso)';$('fdens').hidden=!$('dens').checked}
+function leer(N0){var dn=$('dens').checked;return{modo:$('estoc').checked?'estocastico':'determinista',N0:N0,
+ natalidad:+$('b').value,mortalidad:+$('d').value,inmigracion:+$('i').value,emigracion:+$('e').value,
+ densidad:dn,K:dn?+$('K').value:null,semilla:Math.trunc(+$('sem').value)}}
+function reiniciar(){clearTimeout(timer);corr=false;fin=false;ev=[];pred=null;
+ $('res').hidden=true;$('refl').hidden=true;$('rtxt').value='';
+ var v=M.validarParametros(leer(+$('n0').value));
+ if(!v.ok){$('err').textContent=v.errores.join(' ');est=null;tray=[];ui();return}
+ $('err').textContent='';est=M.crearEstado(leer(+$('n0').value));tray=[M.simular(est,0).trayectoria[0]];
+ Array.prototype.forEach.call(document.getElementsByName('p'),function(r){r.checked=false;r.disabled=false});ui();dibujar()}
+function vivo(){etiquetas();if(!est)return;var v=M.validarParametros(leer(est.N));
+ if(!v.ok){$('err').textContent=v.errores.join(' ');return}$('err').textContent='';
+ /* Se conserva t, N y el estado del generador; solo cambian los parámetros */
+ est=Object.freeze({t:est.t,N:est.N,extinta:est.extinta,parametros:v.parametros,rng:est.rng});dibujar()}
+function ui(){$('go').disabled=fin||!est;$('pausa').disabled=!corr;
+ $('go').textContent=(est&&est.t>0&&!corr&&!fin)?'▶ Continuar':'▶ Iniciar'}
+function tick(){if(!corr||fin)return;var r=M.paso(est);est=r.estado;tray.push(r.registro);eventos(r.registro);
+ if(r.registro.extinta||est.t>=horiz)terminar();dibujar();if(corr&&!fin)timer=setTimeout(tick,VEL[$('vel').value])}
+function iniciar(){if(!est)return;if(est.t===0&&!pred){var s=document.querySelector('input[name=p]:checked');
+ if(!s){$('estado').textContent='Primero elige tu predicción (arriba).';$('pred').focus&&document.querySelector('input[name=p]').focus();return}
+ pred=s.value;Array.prototype.forEach.call(document.getElementsByName('p'),function(r){r.disabled=true})}
+ corr=true;$('estado').textContent='Simulación en marcha…';ui();tick()}
+function pausar(){corr=false;clearTimeout(timer);$('estado').textContent='En pausa.';ui()}
+function clasif(){if(est.extinta)return'se extingue';var w=tray.slice(-11),ref=w[0].N,c=(est.N-ref)/Math.max(ref,1);
+ return Math.abs(c)<0.03?'se estabiliza':(c>0?'aumenta':'disminuye')}
+function terminar(){fin=true;corr=false;clearTimeout(timer);
+ $('estado').textContent=est.extinta?'✕ EXTINCIÓN: la población llegó a 0 en t = '+est.t+'. La simulación terminó (una población extinta no revive, ni con inmigración).':'Fin del experimento en t = '+est.t+'.';
+ ui();var r=$('reto').value;if(r==='libre')mostrar();else{$('refl').hidden=false;$('refl').querySelector('h2').textContent=RETOS[r].q}}
+function mostrar(){var r=$('reto').value,u=tray[tray.length-1],h='',c=clasif();
+ h+='<h2>Resultado</h2><p>Tu predicción: <b>'+pred+'</b>. Lo que pasó: <b>'+c+'</b> (N final = '+f(est.N,1)+'; criterio: cambio de N en los últimos 10 pasos, menos de 3 % = se estabiliza). '+(pred===c?'✔ Acertaste.':'✘ No coincidió: revisa por qué.')+'</p>';
+ if(u.B!==null)h+='<p>Último paso: nacen '+f(u.B,1)+', mueren '+f(u.D,1)+' → <b>crecimiento natural (B − D) = '+f(u.B-u.D,1)+'</b>. Entran '+f(u.I,1)+', salen '+f(u.E,1)+' → <b>crecimiento por migración (I − E) = '+f(u.I-u.E,1)+'</b>.</p>';
+ if(r==='r1'){var w=tray.slice(-10),ok=!est.extinta&&w.every(function(x){return x.N>=45&&x.N<=55});h+='<p><b>'+(ok?'Meta cumplida.':'Meta no cumplida.')+'</b> Usaste b='+f($('b').value,2)+', d='+f($('d').value,2)+', I='+f($('i').value,1)+', e='+f($('e').value,2)+'.</p>'}
+ if(r==='r2'){var ok2=!est.extinta&&est.N>=10;h+='<p><b>'+(ok2?'Meta cumplida':'Meta no cumplida')+'</b> con inmigración I = '+f($('i').value,1)+'. '+(ok2?'¿Podrías lograrlo con menos? Pruébalo y compara.':'Piensa qué variable cambió el balance.')+'</p>'}
+ if($('estoc').checked)h+='<p>Modo estocástico: con otra semilla el resultado puede cambiar.</p>';
+ $('res').innerHTML=h;$('res').hidden=false}
+/* ---- animación de individuos ---- */
+function escala(N){var k=0,m=[1,2,5];while(true){var p=m[k%3]*Math.pow(10,Math.floor(k/3));if(N/p<=150)return p;k++}}
+function eventos(r){var p=escala(Math.max(est.N,1)),now=performance.now();
+ [['n',r.B],['m',r.D],['i',r.I],['s',r.E]].forEach(function(a){var c=Math.min(Math.round(a[1]/p),12);
+  for(var j=0;j<c;j++)ev.push({k:a[0],x:Math.random(),y:Math.random(),t0:now})});
+ if(!raf)raf=requestAnimationFrame(anim)}
+function anim(){raf=0;var now=performance.now();ev=ev.filter(function(e){return now-e.t0<700});pintarInd(now);if(ev.length)raf=requestAnimationFrame(anim)}
+function lienzo(c){var d=window.devicePixelRatio||1,w=c.clientWidth,h=c.clientHeight;if(c.width!==w*d){c.width=w*d;c.height=h*d}
+ var g=c.getContext('2d');g.setTransform(d,0,0,d,0,0);g.clearRect(0,0,w,h);return{g:g,w:w,h:h}}
+function pintarInd(now){var c=lienzo($('ind')),g=c.g,N=est?est.N:0,p=escala(Math.max(N,1)),n=Math.round(N/p);
+ $('escala').textContent=p===1?'Cada punto = 1 individuo.':'Cada punto = '+p+' individuos (se dibujan '+n+'; N real = '+f(N,est&&est.parametros.modo==='estocastico'?0:1)+').';
+ g.strokeStyle='#111';g.lineWidth=1.5;g.fillStyle='#4a90d9';
+ for(var i=0;i<n;i++){var x=12+(Math.abs(Math.sin(i*12.9898)*43758.5453)%1)*(c.w-24),y=12+(Math.abs(Math.sin(i*78.233)*12345.678)%1)*(c.h-24);
+  g.beginPath();g.arc(x,y,5,0,7);g.fill();g.stroke()}
+ g.font='bold 18px sans-serif';g.textAlign='center';
+ ev.forEach(function(e){var a=1-(now-e.t0)/700;g.globalAlpha=Math.max(a,0);g.fillStyle='#000';
+  var x=12+e.x*(c.w-24),y=12+e.y*(c.h-24);
+  if(e.k==='n')g.fillText('▲',x,y);else if(e.k==='m')g.fillText('✕',x,y);
+  else if(e.k==='i')g.fillText('➜',10+(1-a)*40,y);else g.fillText('➜',c.w-10+(1-a)*0-(a)*30+30*(1-a),y)});
+ g.globalAlpha=1;if(N===0&&est){g.fillStyle='#900';g.font='bold 20px sans-serif';g.fillText('Población extinta',c.w/2,c.h/2)}}
+/* ---- gráfica ---- */
+function graf(){var c=lienzo($('graf')),g=c.g,L=44,B=26,T=10,R=10,pw=c.w-L-R,ph=c.h-B-T,tm=Math.max(horiz,1),r=$('reto').value;
+ var mx=1;tray.forEach(function(x){mx=Math.max(mx,x.N)});if(r==='r1')mx=Math.max(mx,60);if(est&&est.parametros.densidad)mx=Math.max(mx,est.parametros.K);mx*=1.1;
+ function X(t){return L+t/tm*pw}function Y(n){return T+ph-n/mx*ph}
+ g.strokeStyle='#111';g.fillStyle='#111';g.lineWidth=1.5;g.font='13px sans-serif';
+ g.beginPath();g.moveTo(L,T);g.lineTo(L,T+ph);g.lineTo(L+pw,T+ph);g.stroke();
+ g.textAlign='right';[0,.5,1].forEach(function(q){g.fillText(Math.round(mx/1.1*q),L-4,Y(mx/1.1*q)+4)});
+ g.textAlign='center';g.fillText('t (pasos)',L+pw/2,c.h-4);g.fillText('0',L,c.h-12);g.fillText(tm,L+pw,c.h-12);
+ g.save();g.translate(12,T+ph/2);g.rotate(-Math.PI/2);g.fillText('N (individuos)',0,0);g.restore();
+ if(r==='r1'){g.fillStyle='rgba(245,163,0,.3)';g.fillRect(L,Y(55),pw,Y(45)-Y(55));g.fillStyle='#111';g.textAlign='left';g.fillText('meta 45–55',L+4,Y(55)-3)}
+ if(est&&est.parametros.densidad){g.setLineDash([6,4]);g.beginPath();g.moveTo(L,Y(est.parametros.K));g.lineTo(L+pw,Y(est.parametros.K));g.stroke();g.setLineDash([]);g.textAlign='left';g.fillText('K',L+4,Y(est.parametros.K)-3)}
+ g.strokeStyle='#0b4fa8';g.lineWidth=2.5;g.beginPath();tray.forEach(function(x,i){i?g.lineTo(X(x.t),Y(x.N)):g.moveTo(X(x.t),Y(x.N))});g.stroke();
+ g.fillStyle='#0b4fa8';var s=Math.ceil(tray.length/40);tray.forEach(function(x,i){if(i%s===0||i===tray.length-1){g.beginPath();g.arc(X(x.t),Y(x.N),3.5,0,7);g.fill()}})}
+function dibujar(){graf();pintarInd(performance.now());var u=tray[tray.length-1];if(!u)return;
+ var d=est.parametros.modo==='estocastico'?0:2,h='<td>'+u.t+'</td><td>'+f(u.N,d)+'</td>';
+ ['B','D','I','E'].forEach(function(k){h+='<td>'+(u[k]===null?'—':f(u[k],d))+'</td>'});$('fila').innerHTML=h;
+ $('aviso').textContent=u.aviso||(est.parametros.modo==='estocastico'?'Modo estocástico — semilla: '+est.parametros.semilla:'Modo determinista (sin azar): N puede tener decimales.')}
+/* ---- CSV ---- */
+function csv(){if(!est)return;var t=M.exportarCSV({parametros:est.parametros,trayectoria:tray});
+ var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([t],{type:'text/csv'}));a.download='poblacion.csv';document.body.appendChild(a);a.click();a.remove()}
+/* ---- eventos ---- */
+['b','d','i','e','dens','K'].forEach(function(x){$(x).addEventListener('input',vivo)});
+['estoc','sem','n0'].forEach(function(x){$(x).addEventListener('change',function(){etiquetas();reiniciar()})});
+$('go').onclick=iniciar;$('pausa').onclick=pausar;$('reset').onclick=reiniciar;$('csv').onclick=csv;
+$('ver').onclick=function(){if($('rtxt').value.trim().length<10){$('estado').textContent='Escribe tu explicación (mínimo una frase) antes de ver el resultado.';return}$('refl').hidden=true;mostrar()};
+$('reto').onchange=function(){var r=RETOS[this.value];horiz=r.h;$('retotxt').textContent=r.t;
+ if(r.n0!==undefined){$('n0').value=r.n0;$('b').value=r.b;$('d').value=r.d;$('i').value=r.i;$('e').value=r.e;$('dens').checked=false}
+ etiquetas();reiniciar()};
+window.addEventListener('resize',dibujar);
+$('retotxt').textContent=RETOS.libre.t;etiquetas();reiniciar();
+})();
+</script></body></html>
